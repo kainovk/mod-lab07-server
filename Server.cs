@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 
 namespace Client_Server
@@ -12,6 +13,11 @@ namespace Client_Server
         private int numRequests = 0;
         private int numServedRequests = 0;
         private int numRejectedRequests = 0;
+        private double totalTimeSpentBusy = 0;
+        private int numThreadsBusy = 0;
+
+        private readonly Stopwatch stopWatch = new Stopwatch();
+        private int numIdleThreads = 0;
 
         public Server(int poolSize)
         {
@@ -24,7 +30,7 @@ namespace Client_Server
             }
         }
 
-        public void HandleRequest()
+        private void HandleRequest()
         {
             while (true)
             {
@@ -33,7 +39,10 @@ namespace Client_Server
                 {
                     if (requestQueue.Count == 0)
                     {
+                        Interlocked.Increment(ref numIdleThreads);
                         Monitor.Wait(lockObject);
+                        Interlocked.Decrement(ref numIdleThreads);
+                        continue;
                     }
 
                     request = requestQueue.Dequeue();
@@ -41,7 +50,6 @@ namespace Client_Server
 
                 Interlocked.Increment(ref numServedRequests);
                 Console.WriteLine($"Начало обработки запроса: {request.ProcessingTime}");
-                // Simulate request processing time
                 Thread.Sleep(request.ProcessingTime);
                 Console.WriteLine($"Конец обработки запроса: {request.ProcessingTime}");
             }
@@ -64,21 +72,69 @@ namespace Client_Server
                     Interlocked.Increment(ref numRejectedRequests);
                 }
             }
+
+            if (!stopWatch.IsRunning)
+            {
+                stopWatch.Start();
+            }
         }
 
-        public int NumRequests
+        public int NumRequests => numRequests;
+
+        public int NumServedRequests => numServedRequests;
+
+        public int NumRejectedRequests => numRejectedRequests;
+
+
+        public double GetIdleProbability()
         {
-            get { return numRequests; }
+            int numIdleThreads = 0;
+
+            lock (lockObject)
+            {
+                for (int i = 0; i < poolSize; i++)
+                {
+                    if (!threads[i].IsAlive)
+                    {
+                        numIdleThreads++;
+                    }
+                }
+            }
+
+            return (double)numIdleThreads / poolSize;
         }
 
-        public int NumServedRequests
+        public double GetRejectProbability()
         {
-            get { return numServedRequests; }
+            return (double)numRejectedRequests / numRequests;
         }
 
-        public int NumRejectedRequests
+        public double GetRelativeThroughput()
         {
-            get { return numRejectedRequests; }
+            return (double)numServedRequests / numRequests;
+        }
+
+        public double GetAbsoluteThroughput()
+        {
+            return (double)numServedRequests / poolSize;
+        }
+
+        public double GetAverageBusyThreads()
+        {
+            int numBusyThreads = 0;
+
+            lock (lockObject)
+            {
+                for (int i = 0; i < poolSize; i++)
+                {
+                    if (threads[i].IsAlive)
+                    {
+                        numBusyThreads++;
+                    }
+                }
+            }
+
+            return numBusyThreads;
         }
     }
 }
