@@ -7,10 +7,10 @@ namespace Client_Server
     {
         static void Main(string[] args)
         {
-            int numRequests = 50;
+            int numRequests = 30;
             int poolSize = 5;
             int requestIntensity = 1000 / 10; // количество запросов в секунду
-            int serviceIntensity = 1000 / 5; // количество запросов, обрабатываемых сервером в секунду
+            int serviceIntensity = 1000 / 1; // количество запросов, обрабатываемых сервером в секунду
 
             Server server = new Server(poolSize, serviceIntensity);
             Client client = new Client(server);
@@ -22,7 +22,6 @@ namespace Client_Server
                 client.SendRequest(processingTime);
                 Thread.Sleep(requestIntensity);
             }
-
 
             Thread.Sleep((requestIntensity + serviceIntensity) * (poolSize + 1));
 
@@ -40,6 +39,39 @@ namespace Client_Server
             Console.WriteLine($"Relative throughput: {throughputRel}");
             Console.WriteLine($"Absolute throughput: {throughputAbs}");
             Console.WriteLine($"Average number of busy threads: {avgBusyThreads}");
+
+            // рассчет теоретических результатов
+            var p = (double)requestIntensity / serviceIntensity;
+            Console.WriteLine("Приведенная интенсивность потока заявок: " + p);
+
+            var result = 0.0;
+            for (var i = 0; i < numRequests; i++)
+            {
+                result += Math.Pow(p, i) / Factorial(i);
+            }
+
+            var p0 = 1.0 / result;
+            Console.WriteLine("Теоретическая вероятность простоя системы: " + p0);
+
+            var pn = p0 == 0
+                ? 0
+                : p0 * Math.Pow(p, numRequests) / Factorial(numRequests);
+            Console.WriteLine("Теоретическая вероятность отказа системы: " + pn);
+
+            var theoreticalThroughputRel = 1 - pn;
+            Console.WriteLine("Относительная пропускная способность: " + theoreticalThroughputRel);
+
+            var theoreticalThroughputAbs = requestIntensity * theoreticalThroughputRel;
+            Console.WriteLine("Абсолютная пропускная способность: " + theoreticalThroughputAbs);
+
+            var theoreticalNumberBusyThreads = theoreticalThroughputAbs / serviceIntensity;
+            Console.WriteLine("Среднее число занятых каналов: " + theoreticalNumberBusyThreads);
+        }
+
+        private static int Factorial(int n)
+        {
+            if (n == 0) return 1;
+            return n * Factorial(n - 1);
         }
     }
 }
