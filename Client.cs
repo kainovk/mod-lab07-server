@@ -2,17 +2,17 @@
 {
     public class Client
     {
-        private readonly Server server;
+        private readonly Server _server;
 
         public Client(Server server)
         {
-            this.server = server;
+            this._server = server;
         }
 
         public void SendRequest(int processingTime)
         {
-            Request request = new Request(processingTime);
-            server.EnqueueRequest(request);
+            var request = new Request(processingTime);
+            _server.EnqueueRequest(request);
         }
     }
 }

@@ -1,140 +1,116 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Threading;
 
 namespace Client_Server
 {
     public class Server
     {
-        private readonly int poolSize;
-        private readonly Thread[] threads;
-        private readonly object lockObject = new object();
-        private int numRequests = 0;
-        private int numServedRequests = 0;
-        private int numRejectedRequests = 0;
-        private double totalTimeSpentBusy = 0;
-        private int numThreadsBusy = 0;
+        private readonly int _poolSize;
+        private readonly int _intensity;
+        private int _totalBusyThreads;
 
-        private readonly Stopwatch stopWatch = new Stopwatch();
-        private int numIdleThreads = 0;
+        private readonly object _queueLock = new object();
+        private readonly Mutex _mtx = new Mutex();
+        private readonly ConcurrentQueue<Request> _requestQueue = new ConcurrentQueue<Request>();
+        private DateTime _lastRequestTime;
 
-        public Server(int poolSize)
+        public Server(int poolSize, int intensity)
         {
-            this.poolSize = poolSize;
-            this.threads = new Thread[poolSize];
-            for (int i = 0; i < poolSize; i++)
+            _poolSize = poolSize;
+            _intensity = intensity;
+            _lastRequestTime = DateTime.Now.AddMilliseconds(-_intensity);
+            _totalBusyThreads = 0;
+            var pool = new Thread[poolSize];
+            for (var i = 0; i < poolSize; i++)
             {
-                threads[i] = new Thread(HandleRequest);
-                threads[i].Start();
+                var threadId = i;
+                pool[i] = new Thread(() => HandleRequest(threadId));
+                pool[i].Start();
             }
         }
 
-        private void HandleRequest()
+        private void HandleRequest(int threadId)
         {
             while (true)
             {
-                Request request;
-                lock (lockObject)
+                if (_requestQueue.IsEmpty) continue;
+                _mtx.WaitOne();
+                var currentTime = DateTime.Now;
+                var diff = (currentTime - _lastRequestTime).TotalMilliseconds;
+                if (diff < _intensity)
                 {
-                    if (requestQueue.Count == 0)
-                    {
-                        Interlocked.Increment(ref numIdleThreads);
-                        Monitor.Wait(lockObject);
-                        Interlocked.Decrement(ref numIdleThreads);
-                        continue;
-                    }
-
-                    request = requestQueue.Dequeue();
+                    _mtx.ReleaseMutex();
+                    continue;
                 }
 
-                Interlocked.Increment(ref numServedRequests);
-                Console.WriteLine($"Начало обработки запроса: {request.ProcessingTime}");
+                if (!_requestQueue.TryDequeue(out var request))
+                {
+                    _mtx.ReleaseMutex();
+                    continue;
+                }
+
+                NumServedRequests++;
+                _totalBusyThreads += _requestQueue.Count + 1;
+                Console.WriteLine($"Начало обработки запроса {request.ProcessingTime} потоком {threadId + 1}");
+                _lastRequestTime = currentTime;
+                _mtx.ReleaseMutex();
                 Thread.Sleep(request.ProcessingTime);
-                Console.WriteLine($"Конец обработки запроса: {request.ProcessingTime}");
+                Console.WriteLine($"Конец обработки запроса {request.ProcessingTime}  потоком {threadId + 1}");
             }
         }
-
-        private readonly Queue<Request> requestQueue = new Queue<Request>();
 
         public void EnqueueRequest(Request request)
         {
-            Interlocked.Increment(ref numRequests);
-            lock (lockObject)
+            lock (_queueLock)
             {
-                if (requestQueue.Count < poolSize)
+                NumRequests++;
+                if (_requestQueue.Count < _poolSize)
                 {
-                    requestQueue.Enqueue(request);
-                    Monitor.Pulse(lockObject);
+                    _requestQueue.Enqueue(request);
                 }
                 else
                 {
-                    Interlocked.Increment(ref numRejectedRequests);
+                    Console.WriteLine($"Запрос с временем обработки {request.ProcessingTime} отклонен");
+                    NumRejectedRequests++;
                 }
-            }
-
-            if (!stopWatch.IsRunning)
-            {
-                stopWatch.Start();
             }
         }
 
-        public int NumRequests => numRequests;
+        public int NumRequests { get; private set; }
 
-        public int NumServedRequests => numServedRequests;
+        public int NumServedRequests { get; private set; }
 
-        public int NumRejectedRequests => numRejectedRequests;
-
-
-        public double GetIdleProbability()
-        {
-            int numIdleThreads = 0;
-
-            lock (lockObject)
-            {
-                for (int i = 0; i < poolSize; i++)
-                {
-                    if (!threads[i].IsAlive)
-                    {
-                        numIdleThreads++;
-                    }
-                }
-            }
-
-            return (double)numIdleThreads / poolSize;
-        }
+        public int NumRejectedRequests { get; private set; }
 
         public double GetRejectProbability()
         {
-            return (double)numRejectedRequests / numRequests;
+            return (double)NumRejectedRequests / NumRequests;
         }
 
         public double GetRelativeThroughput()
         {
-            return (double)numServedRequests / numRequests;
+            return (double)NumServedRequests / NumRequests;
         }
 
         public double GetAbsoluteThroughput()
         {
-            return (double)numServedRequests / poolSize;
+            return (double)NumServedRequests / _poolSize;
+        }
+
+        public double GetIdleThreadProbability()
+        {
+            return (double)_totalBusyThreads / (NumRequests * _poolSize);
         }
 
         public double GetAverageBusyThreads()
         {
-            int numBusyThreads = 0;
-
-            lock (lockObject)
+            if (NumServedRequests == 0)
             {
-                for (int i = 0; i < poolSize; i++)
-                {
-                    if (threads[i].IsAlive)
-                    {
-                        numBusyThreads++;
-                    }
-                }
+                return 0.0;
             }
 
-            return numBusyThreads;
+            return (double)_totalBusyThreads / NumServedRequests;
         }
     }
 }

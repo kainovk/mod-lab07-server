@@ -9,28 +9,24 @@ namespace Client_Server
         {
             int numRequests = 50;
             int poolSize = 5;
-            int requestIntensity = 1000 / 20; // количество запросов в секунду
-            int serviceIntensity = 1000 / 1; // время выполнения запроса в секундах
+            int requestIntensity = 1000 / 10; // количество запросов в секунду
+            int serviceIntensity = 1000 / 5; // количество запросов, обрабатываемых сервером в секунду
 
-            Server server = new Server(poolSize);
+            Server server = new Server(poolSize, serviceIntensity);
             Client client = new Client(server);
 
             for (int i = 0; i < numRequests; i++)
             {
-                client.SendRequest(serviceIntensity);
-                Console.WriteLine($"Sent request {i + 1} with processing time {serviceIntensity} ms");
+                var processingTime = serviceIntensity;
+                Console.WriteLine($"Отправлен запрос {i + 1} с временем обработки {processingTime} ms");
+                client.SendRequest(processingTime);
                 Thread.Sleep(requestIntensity);
             }
 
-            // ожидаем завершения всех запросов
-            while (server.NumRequests > server.NumServedRequests + server.NumRejectedRequests)
-            {
-                Thread.Sleep(5_000);
-            }
 
-            Thread.Sleep(serviceIntensity + 100);
+            Thread.Sleep((requestIntensity + serviceIntensity) * (poolSize + 1));
 
-            double idleProb = server.GetIdleProbability();
+            double idleProb = server.GetIdleThreadProbability();
             double rejectProb = server.GetRejectProbability();
             double throughputRel = server.GetRelativeThroughput();
             double throughputAbs = server.GetAbsoluteThroughput();
